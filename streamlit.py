@@ -162,14 +162,14 @@ def import_dependencies():
         from langchain_community.vectorstores import FAISS
         from langchain.embeddings.base import Embeddings
         from langchain.llms.base import LLM
-        return True, Document, FAISS, None, None, None
+        return True, Document, FAISS, Embeddings, LLM, None
     except ImportError as e:
         error_msg = f"Missing dependencies: {str(e)}"
         logger.error(error_msg)
         return False, None, None, None, None, error_msg
 
 # Check dependencies
-deps_available, Document, FAISS, _, _, deps_error = import_dependencies()
+deps_available, Document, FAISS, Embeddings, LLM, deps_error = import_dependencies()
 
 # Custom Ollama API client
 class OllamaAPIClient:
@@ -216,6 +216,7 @@ class OllamaAPIClient:
 # Custom Embeddings and LLM classes for Ollama API
 class OllamaAPIEmbeddings(Embeddings):
     def __init__(self, model: str, base_url: str, api_key: str):
+        super().__init__()
         self.model = model
         self.client = OllamaAPIClient(base_url, api_key)
     
