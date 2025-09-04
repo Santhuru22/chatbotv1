@@ -142,14 +142,14 @@ class Config:
     
     def __init__(self):
         self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'https://api.ollama.com/v1')
-        self.ollama_api_key = os.getenv('OLLAMA_API_KEY', '639a1643fecc4ecf8198f79c4f04b22b.yZJbvn99TEMQwzJ-hPXfRtu6')
+        self.ollama_api_key = '639a1643fecc4ecf8198f79c4f04b22b.yZJbvn99TEMQwzJ-hPXfRtu6'
         self.default_embedding_model = os.getenv('DEFAULT_EMBEDDING_MODEL', 'nomic-embed-text')
         self.default_chat_model = os.getenv('DEFAULT_CHAT_MODEL', 'llama3.2:1b')
         self.vector_store_path = os.getenv('VECTOR_STORE_PATH', 'faiss_index_ollama')
         self.max_context_chunks = int(os.getenv('MAX_CONTEXT_CHUNKS', '3'))
         self.temperature = float(os.getenv('TEMPERATURE', '0.7'))
         self.github_repo = os.getenv('GITHUB_REPO', 'Santhuru22/chatbotv1')
-        self.version = os.getenv('APP_VERSION', '1.0.1')
+        self.version = os.getenv('APP_VERSION', '1.0.0')
 
 config = Config()
 
@@ -171,7 +171,7 @@ def import_dependencies():
 # Check dependencies
 deps_available, Document, FAISS, Embeddings, LLM, deps_error = import_dependencies()
 
-# Custom Ollama API client with retry logic
+# Custom Ollama API client
 class OllamaAPIClient:
     """Client for interacting with Ollama cloud API"""
     
@@ -180,68 +180,38 @@ class OllamaAPIClient:
         self.api_key = api_key
     
     def generate_embedding(self, text: str, model: str) -> List[float]:
-        """Generate embeddings using Ollama API with retries"""
-        retries = 3
-        for attempt in range(retries):
-            try:
-                response = requests.post(
-                    f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": model, "prompt": text},
-                    timeout=10
-                )
-                response.raise_for_status()
-                return response.json().get("embedding", [])
-            except requests.exceptions.HTTPError as e:
-                logger.error(f"Embedding HTTP error (attempt {attempt+1}/{retries}): {e}, Status: {e.response.status_code if e.response else 'N/A'}")
-                if e.response and e.response.status_code == 429 and attempt < retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                    continue
-                return []
-            except requests.exceptions.ConnectionError as e:
-                logger.error(f"Embedding connection error (attempt {attempt+1}/{retries}): {e}")
-                if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                return []
-            except Exception as e:
-                logger.error(f"Embedding unexpected error: {e}")
-                return []
-        return []
+        """Generate embeddings using Ollama API"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/embeddings",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={"model": model, "prompt": text},
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json().get("embedding", [])
+        except Exception as e:
+            logger.error(f"Embedding generation error: {e}")
+            return []
     
     def generate_response(self, prompt: str, model: str, temperature: float) -> str:
-        """Generate response using Ollama API with retries"""
-        retries = 3
-        for attempt in range(retries):
-            try:
-                response = requests.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": temperature
-                    },
-                    timeout=30
-                )
-                response.raise_for_status()
-                return response.json()["choices"][0]["message"]["content"]
-            except requests.exceptions.HTTPError as e:
-                logger.error(f"Response HTTP error (attempt {attempt+1}/{retries}): {e}, Status: {e.response.status_code if e.response else 'N/A'}")
-                if e.response and e.response.status_code == 429 and attempt < retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                return f"Error generating response: HTTP {e.response.status_code if e.response else 'Unknown'}"
-            except requests.exceptions.ConnectionError as e:
-                logger.error(f"Response connection error (attempt {attempt+1}/{retries}): {e}")
-                if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                return "Error generating response: Connection failed"
-            except Exception as e:
-                logger.error(f"Response unexpected error: {e}")
-                return f"Error generating response: {str(e)}"
-        return "Error generating response: Max retries exceeded"
+        """Generate response using Ollama API"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.error(f"Response generation error: {e}")
+            return f"Error generating response: {str(e)}"
 
 # Custom Embeddings and LLM classes for Ollama API
 class OllamaAPIEmbeddings(Embeddings):
@@ -571,25 +541,12 @@ def check_ollama_status(base_url: str, api_key: str):
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=5
         )
-        response.raise_for_status()
-        models = response.json().get('models', [])
-        logger.info(f"Ollama API online. Available models: {models}")
-        return True, [model['name'] for model in models]
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response else 'N/A'
-        error_msg = f"Ollama API HTTP error: {e}, Status code: {status}"
-        logger.error(error_msg)
-        st.error(f"❌ {error_msg}\n\n**Fix**: Verify the API key and endpoint in Streamlit Cloud Secrets or contact your Ollama provider.")
-        return False, []
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"Ollama API connection error: {e}"
-        logger.error(error_msg)
-        st.error(f"❌ {error_msg}\n\n**Fix**: Check network connectivity or ensure the endpoint ({base_url}) is accessible.")
+        if response.status_code == 200:
+            models = response.json().get('models', [])
+            return True, [model['name'] for model in models]
         return False, []
     except Exception as e:
-        error_msg = f"Ollama API unexpected error: {e}"
-        logger.error(error_msg)
-        st.error(f"❌ {error_msg}\n\n**Fix**: Check logs in Streamlit Cloud ('Manage app') or contact your Ollama provider.")
+        logger.error(f"Ollama API connection error: {e}")
         return False, []
 
 def display_github_header():
@@ -622,30 +579,24 @@ def display_sidebar():
         else:
             st.markdown('<div class="status-badge status-offline">✗ Ollama API Offline</div>', 
                        unsafe_allow_html=True)
-            st.error("""
-            Please verify the Ollama API key and endpoint:
-            1. Check Streamlit Cloud Secrets for `OLLAMA_BASE_URL` and `OLLAMA_API_KEY`.
-            2. Test the endpoint: `curl -X GET <OLLAMA_BASE_URL>/models -H "Authorization: Bearer <OLLAMA_API_KEY>"`
-            3. Contact your Ollama provider for a valid API key and endpoint.
-            4. Check Streamlit Cloud logs via 'Manage app' for details.
-            """)
+            st.error("Please verify the Ollama API key and endpoint.")
             return None
         
         st.divider()
         
-        embedding_models = [m for m in available_models if 'embed' in m.lower()] or [config.default_embedding_model]
-        chat_models = [m for m in available_models if not 'embed' in m.lower()] or [config.default_chat_model]
+        embedding_models = [m for m in available_models if 'embed' in m.lower()]
+        chat_models = [m for m in available_models if not 'embed' in m.lower()]
         
         embedding_model = st.selectbox(
             "🔍 Embedding Model",
-            options=embedding_models,
+            options=embedding_models or [config.default_embedding_model],
             index=0,
             help="Model for creating vector embeddings"
         )
         
         chat_model = st.selectbox(
             "💬 Chat Model", 
-            options=chat_models,
+            options=chat_models or [config.default_chat_model],
             index=0,
             help="Model for generating responses"
         )
