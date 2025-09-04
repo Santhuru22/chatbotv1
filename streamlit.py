@@ -141,8 +141,8 @@ class Config:
     """Configuration management for the chatbot"""
     
     def __init__(self):
-        self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'https://api.ollama.com/v1')
-        self.ollama_api_key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC37p+Suuw915wQt87anWmqk1GdrtEKz6bDnIKfqSbjx'
+        self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')  # Default to local Ollama
+        self.ollama_api_key = os.getenv('OLLAMA_API_KEY', None)  # No API key for local Ollama
         self.default_embedding_model = os.getenv('DEFAULT_EMBEDDING_MODEL', 'nomic-embed-text')
         self.default_chat_model = os.getenv('DEFAULT_CHAT_MODEL', 'llama3.2:1b')
         self.vector_store_path = os.getenv('VECTOR_STORE_PATH', 'faiss_index_ollama')
@@ -173,23 +173,32 @@ deps_available, Document, FAISS, Embeddings, LLM, deps_error = import_dependenci
 
 # Custom Ollama API client
 class OllamaAPIClient:
-    """Client for interacting with Ollama cloud API"""
+    """Client for interacting with Ollama cloud or local API"""
     
-    def __init__(self, base_url: str, api_key: str):
-        self.base_url = base_url
+    def __init__(self, base_url: str, api_key: Optional[str]):
+        self.base_url = base_url.rstrip('/')  # Remove trailing slash for consistency
         self.api_key = api_key
     
     def generate_embedding(self, text: str, model: str) -> List[float]:
         """Generate embeddings using Ollama API"""
         try:
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
             response = requests.post(
-                f"{self.base_url}/embeddings",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                f"{self.base_url}/api/embeddings",
+                headers=headers,
                 json={"model": model, "prompt": text},
                 timeout=10
             )
             response.raise_for_status()
             return response.json().get("embedding", [])
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error during embedding generation: {e}, Status Code: {e.response.status_code}, Response: {e.response.text}")
+            if e.response.status_code == 401:
+                return []  # Handle unauthorized error
+            raise
         except Exception as e:
             logger.error(f"Embedding generation error: {e}")
             return []
@@ -197,25 +206,34 @@ class OllamaAPIClient:
     def generate_response(self, prompt: str, model: str, temperature: float) -> str:
         """Generate response using Ollama API"""
         try:
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
             response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                f"{self.base_url}/api/generate",
+                headers=headers,
                 json={
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "prompt": prompt,
                     "temperature": temperature
                 },
                 timeout=30
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            return response.json().get("response", "")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error during response generation: {e}, Status Code: {e.response.status_code}, Response: {e.response.text}")
+            if e.response.status_code == 401:
+                return "Authentication error: Invalid Ollama API key."
+            raise
         except Exception as e:
             logger.error(f"Response generation error: {e}")
             return f"Error generating response: {str(e)}"
 
 # Custom Embeddings and LLM classes for Ollama API
 class OllamaAPIEmbeddings(Embeddings):
-    def __init__(self, model: str, base_url: str, api_key: str):
+    def __init__(self, model: str, base_url: str, api_key: Optional[str]):
         super().__init__()
         self.model = model
         self.client = OllamaAPIClient(base_url, api_key)
@@ -227,7 +245,7 @@ class OllamaAPIEmbeddings(Embeddings):
         return self.client.generate_embedding(text, self.model)
 
 class OllamaAPILLM(LLM):
-    def __init__(self, model: str, base_url: str, api_key: str, temperature: float):
+    def __init__(self, model: str, base_url: str, api_key: Optional[str], temperature: float):
         super().__init__()
         self.model = model
         self.temperature = temperature
@@ -533,17 +551,22 @@ RESPONSE:"""
         }
 
 @st.cache_data(ttl=30)
-def check_ollama_status(base_url: str, api_key: str):
+def check_ollama_status(base_url: str, api_key: Optional[str]):
     """Check Ollama API status and available models"""
     try:
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
         response = requests.get(
-            f"{base_url}/models",
-            headers={"Authorization": f"Bearer {api_key}"},
+            f"{base_url}/api/tags",
+            headers=headers,
             timeout=5
         )
         if response.status_code == 200:
             models = response.json().get('models', [])
             return True, [model['name'] for model in models]
+        logger.error(f"Ollama API returned status {response.status_code}: {response.text}")
         return False, []
     except Exception as e:
         logger.error(f"Ollama API connection error: {e}")
@@ -579,13 +602,13 @@ def display_sidebar():
         else:
             st.markdown('<div class="status-badge status-offline">✗ Ollama API Offline</div>', 
                        unsafe_allow_html=True)
-            st.error("Please verify the Ollama API key and endpoint.")
+            st.error("Please verify the Ollama API key and endpoint. Ensure the Ollama server is running or check cloud provider credentials.")
             return None
         
         st.divider()
         
         embedding_models = [m for m in available_models if 'embed' in m.lower()]
-        chat_models = [m for m in available_models if not 'embed' in m.lower()]
+        chat_models = [m for m in available_models if 'embed' not in m.lower()]
         
         embedding_model = st.selectbox(
             "🔍 Embedding Model",
