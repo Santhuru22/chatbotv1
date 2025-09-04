@@ -1,11 +1,3 @@
-"""
-Vislona RAG Chatbot - GitHub Ready Version
-A Streamlit-based RAG chatbot using Ollama for AI responses and FAISS for vector search.
-
-Author: Santhuru22
-Repository: https://github.com/Santhuru22/chatbotv1
-"""
-
 import streamlit as st
 import os
 import json
@@ -143,6 +135,7 @@ class Config:
         self.vector_store_path = os.getenv('VECTOR_STORE_PATH', 'faiss_index_ollama')
         self.max_context_chunks = int(os.getenv('MAX_CONTEXT_CHUNKS', '3'))
         self.temperature = float(os.getenv('TEMPERATURE', '0.7'))
+        self.ollama_api_key = os.getenv('OLLAMA_API_KEY', '639a1643fecc4ecf8198f79c4f04b22b.yZJbvn99TEMQwzJ-hPXfRtu6')  # Added API key
         
         # GitHub specific settings
         self.github_repo = os.getenv('GITHUB_REPO', 'Santhuru22/chatbotv1')
@@ -178,19 +171,21 @@ class GitHubVislonaRAG:
         self.is_initialized = False
         
     def initialize_components(self, embedding_model: str, chat_model: str, temperature: float):
-        """Initialize LLM and embedding components"""
+        """Initialize LLM and embedding components with API key"""
         try:
             logger.info(f"Initializing with models: {embedding_model}, {chat_model}")
             
             self.embeddings = OllamaEmbeddings(
                 model=embedding_model,
-                base_url=self.config.ollama_base_url
+                base_url=self.config.ollama_base_url,
+                headers={"Authorization": f"Bearer {self.config.ollama_api_key}" if self.config.ollama_api_key else None}  # Added API key header
             )
             
             self.llm = OllamaLLM(
                 model=chat_model,
                 base_url=self.config.ollama_base_url,
-                temperature=temperature
+                temperature=temperature,
+                headers={"Authorization": f"Bearer {self.config.ollama_api_key}" if self.config.ollama_api_key else None}  # Added API key header
             )
             
             self.is_initialized = True
@@ -476,8 +471,9 @@ RESPONSE:"""
 def check_ollama_status(base_url: str = None):
     """Check Ollama server status and available models"""
     url = base_url or config.ollama_base_url
+    headers = {"Authorization": f"Bearer {config.ollama_api_key}"} if config.ollama_api_key else {}
     try:
-        response = requests.get(f"{url}/api/tags", timeout=5)
+        response = requests.get(f"{url}/api/tags", headers=headers, timeout=5)
         if response.status_code == 200:
             models = response.json().get('models', [])
             return True, [model['name'] for model in models]
@@ -524,27 +520,11 @@ def display_sidebar():
             
             with st.expander("🚀 Setup Instructions", expanded=True):
                 st.markdown("""
-                **1. Install Ollama:**
-                ```bash
-                # macOS
-                brew install ollama
+                **1. Ensure Remote Ollama is Running:**
+                Contact your server administrator to confirm the Ollama instance is active.
                 
-                # Linux
-                curl -fsSL https://ollama.ai/install.sh | sh
-                
-                # Windows: Download from ollama.ai
-                ```
-                
-                **2. Start Ollama:**
-                ```bash
-                ollama serve
-                ```
-                
-                **3. Install Models:**
-                ```bash
-                ollama pull nomic-embed-text
-                ollama pull llama3.2:1b
-                ```
+                **2. Configure URL:**
+                Use the sidebar to set the correct Ollama Base URL.
                 """)
             return None
         
@@ -579,12 +559,20 @@ def display_sidebar():
                 help="Ollama server endpoint",
                 key="ollama_url"
             )
+            st.text_input(
+                "Ollama API Key",
+                value=config.ollama_api_key,
+                help="API key for authenticated access (if required)",
+                type="password",
+                key="ollama_api_key"
+            )
         
         return {
             "embedding_model": embedding_model,
             "chat_model": chat_model,
             "max_chunks": max_chunks,
-            "temperature": temperature
+            "temperature": temperature,
+            "ollama_api_key": st.session_state.get("ollama_api_key", config.ollama_api_key)
         }
 
 def display_features():
@@ -666,201 +654,4 @@ What would you like to know about Vislona today?""",
                             <div class="source-reference">
                                 <strong>Source {i}</strong> (Relevance: {chunk['similarity']:.1%})<br>
                                 <small>Category: {chunk['metadata'].get('category', 'Unknown')} | 
-                                Priority: {chunk['metadata'].get('priority', 'Normal')}</small>
-                                <hr style="margin: 0.5rem 0;">
-                                {chunk['content'][:400]}{'...' if len(chunk['content']) > 400 else ''}
-                            </div>
-                            """, unsafe_allow_html=True)
-    
-    # Chat input
-    if user_input := st.chat_input("Ask me anything about Vislona AI..."):
-        # Add user message
-        st.session_state.messages.append({
-            "role": "user",
-            "content": user_input,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        
-        # Generate response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                result = chatbot.chat(
-                    user_input, 
-                    settings["max_chunks"], 
-                    settings["temperature"]
-                )
-                
-                st.markdown(result["response"])
-                
-                # Add to message history with metadata
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": result["response"],
-                    "timestamp": result["timestamp"],
-                    "metadata": result
-                })
-                
-                st.rerun()
-
-def display_usage_stats():
-    """Display usage statistics"""
-    if len(st.session_state.get("messages", [])) > 1:
-        assistant_messages = [m for m in st.session_state.messages if m["role"] == "assistant" and "metadata" in m]
-        
-        if assistant_messages:
-            total_queries = len(assistant_messages)
-            avg_response_time = sum(m["metadata"]["response_time"] for m in assistant_messages) / total_queries
-            total_sources = sum(len(m["metadata"]["context_chunks"]) for m in assistant_messages)
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Queries", total_queries)
-            with col2:
-                st.metric("Avg Response Time", f"{avg_response_time:.2f}s")
-            with col3:
-                st.metric("Sources Used", total_sources)
-
-def main():
-    """Main application function"""
-    # Check dependencies
-    if not deps_available:
-        st.error("❌ Required dependencies not available!")
-        st.code(f"Error: {deps_error}")
-        st.info("Install with: `pip install -r requirements.txt`")
-        
-        with st.expander("📋 Required Dependencies"):
-            st.code("""
-streamlit>=1.28.0
-langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-ollama>=0.2.0
-faiss-cpu>=1.7.4
-pandas>=1.5.0
-requests>=2.31.0
-""")
-        st.stop()
-    
-    # Display header
-    display_github_header()
-    
-    # Display features
-    display_features()
-    
-    # Get sidebar settings
-    settings = display_sidebar()
-    if not settings:
-        st.warning("⚠️ Please configure Ollama first")
-        st.stop()
-    
-    # Initialize chatbot
-    if "chatbot" not in st.session_state:
-        with st.spinner("🚀 Initializing Vislona AI Assistant..."):
-            chatbot = GitHubVislonaRAG(config)
-            
-            # Initialize components
-            success, message = chatbot.initialize_components(
-                settings["embedding_model"],
-                settings["chat_model"], 
-                settings["temperature"]
-            )
-            
-            if not success:
-                st.error(f"❌ Initialization failed: {message}")
-                st.stop()
-            
-            # Load or create vector store
-            vs_success, vs_message = chatbot.load_or_create_vector_store()
-            
-            if vs_success:
-                st.success(f"✅ {vs_message}")
-            else:
-                st.error(f"❌ Vector store error: {vs_message}")
-                st.stop()
-            
-            st.session_state.chatbot = chatbot
-            st.success("🎉 Vislona AI Assistant is ready!")
-    
-    # Main chat interface
-    st.subheader("💬 Chat Interface")
-    display_chat_interface(st.session_state.chatbot, settings)
-    
-    # Sidebar stats and controls
-    with st.sidebar:
-        st.divider()
-        st.subheader("📊 Usage Statistics")
-        display_usage_stats()
-        
-        st.divider()
-        
-        # Action buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🗑️ Clear Chat"):
-                st.session_state.messages = []
-                st.rerun()
-        
-        with col2:
-            if st.button("🔄 Reset"):
-                for key in ["chatbot", "messages"]:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
-        
-        # Export functionality
-        if len(st.session_state.get("messages", [])) > 2:
-            st.divider()
-            assistant_messages = [m for m in st.session_state.messages if m["role"] == "assistant" and "metadata" in m]
-            
-            if assistant_messages:
-                export_data = []
-                for i, msg in enumerate(assistant_messages):
-                    user_msg = st.session_state.messages[st.session_state.messages.index(msg) - 1]
-                    export_data.append({
-                    "timestamp": msg["timestamp"],
-                    "user_query": user_msg["content"],
-                    "response": msg["content"][:200] + "..." if len(msg["content"]) > 200 else msg["content"],
-                    "response_time": msg["metadata"]["response_time"],
-                    "sources_used": len(msg["metadata"]["context_chunks"]),
-                    "chat_model": msg["metadata"]["model_info"]["chat_model"],
-                    "embedding_model": msg["metadata"]["model_info"]["embedding_model"]
-                })
-                
-                df = pd.DataFrame(export_data)
-                csv_data = df.to_csv(index=False)
-                
-                st.download_button(
-                    "📥 Export Chat History",
-                    data=csv_data,
-                    file_name=f"vislona_chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    help="Download chat history as CSV file"
-                )
-        
-        # GitHub links
-        st.divider()
-        st.subheader("🔗 GitHub Links")
-        
-        st.markdown(f"""
-        - [📖 Repository](https://github.com/{config.github_repo})
-        - [🐛 Report Issues](https://github.com/{config.github_repo}/issues)
-        - [📋 Documentation](https://github.com/{config.github_repo}#readme)
-        - [⭐ Star the Repo](https://github.com/{config.github_repo})
-        """)
-        
-        # System info
-        with st.expander("🔧 System Info"):
-            st.json({
-                "app_version": config.version,
-                "ollama_url": config.ollama_base_url,
-                "vector_store": config.vector_store_path,
-                "models_configured": bool(settings),
-                "chat_initialized": "chatbot" in st.session_state
-            })
-
-if __name__ == "__main__":
-    main()
+                                Priority: {chunk['metadata'].get('priority', '
