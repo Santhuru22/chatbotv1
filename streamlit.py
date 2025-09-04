@@ -142,7 +142,7 @@ class Config:
     
     def __init__(self):
         self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'https://api.ollama.com/v1')
-        self.ollama_api_key = '639a1643fecc4ecf8198f79c4f04b22b.yZJbvn99TEMQwzJ-hPXfRtu6'
+        self.ollama_api_key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC37p+Suuw915wQt87anWmqk1GdrtEKz6bDnIKfqSbjx'
         self.default_embedding_model = os.getenv('DEFAULT_EMBEDDING_MODEL', 'nomic-embed-text')
         self.default_chat_model = os.getenv('DEFAULT_CHAT_MODEL', 'llama3.2:1b')
         self.vector_store_path = os.getenv('VECTOR_STORE_PATH', 'faiss_index_ollama')
